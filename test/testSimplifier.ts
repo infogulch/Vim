@@ -3,7 +3,7 @@ import { ModeName } from '../src/mode/mode';
 import { Position } from '../src/motion/position';
 import { ModeHandler } from '../src/mode/modeHandler';
 import { TextEditor } from '../src/textEditor';
-import { assertEqualLines } from './testUtils';
+import { assertEqualLines, assertEqualPosition, assertEqualMode } from './testUtils';
 
 export function getTestingFunctions(modeHandler: ModeHandler) {
   let testWithObject = testIt.bind(null, modeHandler);
@@ -103,9 +103,8 @@ class TestObjectHelper {
     this._isValid = true;
   }
 
-  public asVimInputText(): string[] {
-    let ret = 'i' + this._testObject.start.join('\n').replace('|', '');
-    return ret.split('');
+  public asVimInputText(): string {
+    return this._testObject.start.join('\n').replace('|', '');
   }
 
   public asVimOutputText(): string[] {
@@ -115,30 +114,21 @@ class TestObjectHelper {
   }
 
   /**
-   * Returns a sequence of Vim movement characters 'hjkl' as a string array
+   * Returns a sequence of Vim movement characters '10G5|' as a string array
    * which will move the cursor to the start position given in the test.
    */
   public getKeyPressesToMoveToStartPosition(): string[] {
     let ret = '';
-    let linesToMove = this.startPosition.line - (this._testObject.start.length - 1);
 
-    let cursorPosAfterEsc =
-      this._testObject.start[this._testObject.start.length - 1].replace('|', '').length - 1;
-    let numCharsInCursorStartLine =
-      this._testObject.start[this.startPosition.line].replace('|', '').length - 1;
-    let columnOnStartLine = Math.min(cursorPosAfterEsc, numCharsInCursorStartLine);
-    let charactersToMove = this.startPosition.character - columnOnStartLine;
-
-    if (linesToMove > 0) {
-      ret += Array(linesToMove + 1).join('j');
-    } else if (linesToMove < 0) {
-      ret += Array(Math.abs(linesToMove) + 1).join('k');
+    // if there's only one line of start text, we're already on it
+    if (this._testObject.start.length > 1) {
+      ret += (this.startPosition.line + 1).toString() + 'G';
     }
 
-    if (charactersToMove > 0) {
-      ret += Array(charactersToMove + 1).join('l');
-    } else if (charactersToMove < 0) {
-      ret += Array(Math.abs(charactersToMove) + 1).join('h');
+    if (this.startPosition.character === 0) {
+      ret += '0';
+    } else {
+      ret += (this.startPosition.character + 1).toString() + '|';
     }
 
     return ret.split('');
@@ -149,83 +139,34 @@ class TestObjectHelper {
  * Tokenize a string like "abc<esc>d<c-c>" into ["a", "b", "c", "<esc>", "d", "<c-c>"]
  */
 function tokenizeKeySequence(sequence: string): string[] {
-  let isBracketedKey = false;
-  let key = "";
-  let result: string[] = [];
-
-  for (const char of sequence) {
-    key += char;
-
-    if (char === '<') {
-      isBracketedKey = true;
-    }
-
-    if (char === '>') {
-      isBracketedKey = false;
-    }
-
-    if (isBracketedKey) {
-      continue;
-    }
-
-    result.push(key);
-    key = "";
-  }
-
-  return result;
+  return sequence.match(/(<[^<>]*?>)|[\s\S]/g);
 }
 
 async function testIt(modeHandler: ModeHandler, testObj: ITestObject): Promise<void> {
   let helper = new TestObjectHelper(testObj);
 
-  // Don't try this at home, kids.
-  (modeHandler as any)._vimState.cursorPosition = new Position(0, 0);
-
-  await modeHandler.handleKeyEvent('<esc>');
-
-  // start:
-  //
-  await modeHandler.handleMultipleKeyEvents(helper.asVimInputText());
-
-  // keysPressed:
-  //
-  await modeHandler.handleKeyEvent('<esc>');
-  // move cursor to start position using 'hjkl'
-  await modeHandler.handleMultipleKeyEvents(helper.getKeyPressesToMoveToStartPosition());
-
-  // assumes key presses are single characters for now
-  await modeHandler.handleMultipleKeyEvents(tokenizeKeySequence(testObj.keysPressed));
-
   // Check valid test object input
   assert(helper.isValid, "Missing '|' in test object.");
 
-  // Check final cursor position
-  //
-  let actualPosition = Position.FromVSCodePosition(TextEditor.getSelection().start);
-  let expectedPosition = helper.endPosition;
+  // set up starting text state. Then fix up vim state by setting cursor position & calling handleKeyEventHelper directly
+  await TextEditor.insert(helper.asVimInputText(), new Position(0, 0), false);
+  modeHandler.vimState.cursorPosition = Position.FromVSCodePosition(TextEditor.getSelection().start);
+  (modeHandler as any)._vimState = await (modeHandler as any).handleKeyEventHelper('<esc>', modeHandler.vimState);
 
-  /*
-  if (actualPosition.line    !== expectedPosition.line ||
-    actualPosition.character !== expectedPosition.character) {
+  // move cursor to start position
+  await modeHandler.handleMultipleKeyEvents(helper.getKeyPressesToMoveToStartPosition());
 
-    debugger;
-  }
-  */
+  // validate cursor starts in correct position, and is in the right mode
+  assertEqualPosition(Position.FromVSCodePosition(TextEditor.getSelection().start), helper.startPosition, "Before keysPressed.");
+  assertEqualMode(modeHandler.currentMode.name, ModeName.Normal);
 
-  assert.equal(actualPosition.line, expectedPosition.line, "Cursor LINE position is wrong.");
-  assert.equal(actualPosition.character, expectedPosition.character, "Cursor CHARACTER position is wrong.");
+  // perform test actions
+  await modeHandler.handleMultipleKeyEvents(tokenizeKeySequence(testObj.keysPressed));
 
-  // end: check given end output is correct
-  //
+  // check final cursor position, end text, and mode (if specified)
   assertEqualLines(helper.asVimOutputText());
-
-  // endMode: check end mode is correct if given
-  if (typeof testObj.endMode !== 'undefined') {
-    let actualMode = ModeName[modeHandler.currentMode.name].toUpperCase();
-    let expectedMode = ModeName[testObj.endMode].toUpperCase();
-    assert.equal(actualMode, expectedMode, "Didn't enter correct mode.");
-  }
+  assertEqualPosition(Position.FromVSCodePosition(TextEditor.getSelection().start), helper.endPosition, "After keysPressed.");
+  assertEqualMode(modeHandler.currentMode.name, testObj.endMode);
 }
-
 
 export { ITestObject, testIt }

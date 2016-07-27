@@ -1,5 +1,7 @@
 "use strict";
 
+import {ModeName} from '../src/mode/mode';
+import {Position} from '../src/motion/position';
 import {TextEditor} from '../src/textEditor';
 import * as vscode from "vscode";
 import * as assert from 'assert';
@@ -27,6 +29,17 @@ export function assertEqualLines(expectedLines: string[]) {
 
   for (let i = 0; i < expectedLines.length; i++) {
     assert.equal(TextEditor.readLineAt(i), expectedLines[i], `Line ${i} is different.`);
+  }
+}
+
+export function assertEqualPosition(actual: Position, expected: Position, message = ''): void {
+  assert.equal(actual.line, expected.line, "Cursor LINE position is wrong. " + message);
+  assert.equal(actual.character, expected.character, "Cursor CHARACTER position is wrong. " + message);
+}
+
+export function assertEqualMode(actual: ModeName, expected?: ModeName, message = ''): void {
+  if (typeof expected !== "undefined") {
+    assert.equal(ModeName[actual].toUpperCase(), ModeName[expected].toUpperCase(), "Didn't enter correct mode. " + message);
   }
 }
 

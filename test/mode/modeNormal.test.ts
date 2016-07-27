@@ -1008,9 +1008,9 @@ suite("Mode Normal", () => {
 
     newTest({
       title: "can ctrl-a on an octal ",
-      start: ["07|"],
+      start: ["07| "],
       keysPressed: "<c-a>",
-      end: ["01|0"]
+      end: ["01|0 "]
     });
 
     newTest({
